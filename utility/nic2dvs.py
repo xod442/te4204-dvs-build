@@ -281,30 +281,39 @@ def create_dvSwitch(si, content, network_folder, cluster, dvs_name, vnic):
     return
 
 
-def _2uplinkdvs(si, dvs_name, num_ports, uplinks):
+def _2uplinkdvs(si, dvs_name, datacenter_name, uplinks):
     content = si.RetrieveContent()
     print(dvs_name)
-    cluster = content.rootFolder.childEntity[0].hostFolder.childEntity[0].host[0].parent
-    spec = vim.DistributedVirtualSwitch.CreateSpec()
-    spec.name = dvs_name
-    spec.numStandalonePorts = num_ports
-    dvs_folder = content.rootFolder.childEntity[0].networkFolder
+    datacenter = next(dc for dc in content.rootFolder.childEntity if dc.name == datacenter_name)
 
-    # Create DVS
-    dvs = cluster.CreateDVS_Task(dvsSpec=spec).info.result
+    if not datacenter:
+        raise Exception(f"Datacenter '{datacenter_name}' not found")
 
-    # Add Uplinks
-    dvs_config_spec = vim.DvsConfigurationSpec()
-    dvs_config_spec.maxPorts = num_ports
-    dvs_config_spec.uplinkPortgroup = vim.DistributedVirtualSwitch.UplinkPortgroup()
+    # Get the network folder in the datacenter
+    network_folder = datacenter.networkFolder
 
-    uplink_spec = vim.DistributedVirtualSwitch.UplinkPortgroup()
-    uplink_spec.uplinkPortgroup = vim.DistributedVirtualSwitch.UplinkPortgroup()
-    uplink_spec.uplinkPortgroup.uplinkPortgroup = uplinks
+    # Create a DistributedVirtualSwitchCreateSpec
+    dvs_create_spec = vim.dvs.VmwareDistributedVirtualSwitch.CreateSpec()
+    dvs_config_spec = vim.dvs.VmwareDistributedVirtualSwitch.ConfigSpec()
+    dvs_config_spec.name = dvs_name
+    dvs_config_spec.uplinkPortPolicy = vim.dvs.VmwareDistributedVirtualSwitch.NameArrayUplinkPortPolicy()
+    dvs_config_spec.uplinkPortPolicy.uplinkPortName = uplinks
 
-    dvs_config_spec.uplinkPortgroup = uplink_spec
-    dvs.ReconfigureDvs_Task(dvsConfigSpec=dvs_config_spec).info.result
+    dvs_create_spec.configSpec = dvs_config_spec
+    dvs_create_spec.productInfo = vim.dvs.ProductSpec(version="7.0.0")
 
+    # Create the DVS
+    print(f"Creating Distributed Virtual Switch '{dvs_name}' with uplinks: {uplinks}")
+    task = network_folder.CreateDVS_Task(dvs_create_spec)
+    task_result = task.info.state
+
+    while task.info.state == vim.TaskInfo.State.running:
+        pass  # Wait for the task to complete
+
+    if task.info.state == vim.TaskInfo.State.success:
+        print(f"Distributed Virtual Switch '{dvs_name}' created successfully")
+    else:
+        print(f"Failed to create DVS: {task.info.error.msg}")
     return
 
 
